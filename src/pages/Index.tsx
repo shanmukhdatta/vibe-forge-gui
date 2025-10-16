@@ -5,6 +5,7 @@ import InputSection from "@/components/InputSection";
 import MusicPlayer from "@/components/MusicPlayer";
 import LoadingAnimation from "@/components/LoadingAnimation";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -17,39 +18,63 @@ const Index = () => {
     setMusicData(null);
 
     try {
-      // TODO: Replace with actual API endpoint
-      const response = await fetch("/api/generate-music", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ prompt }),
+      toast.info("Starting music generation... This may take 20-40 seconds.");
+      
+      // Start the music generation
+      const { data: startData, error: startError } = await supabase.functions.invoke('generate-music', {
+        body: { prompt }
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to generate music");
+      if (startError) throw startError;
+      if (!startData?.id) throw new Error("Failed to start music generation");
+
+      const predictionId = startData.id;
+      console.log("Prediction started:", predictionId);
+
+      // Poll for completion
+      let attempts = 0;
+      const maxAttempts = 60; // 60 attempts * 2 seconds = 2 minutes max
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds between checks
+        
+        const { data: statusData, error: statusError } = await supabase.functions.invoke('check-music-status', {
+          body: { id: predictionId }
+        });
+
+        if (statusError) {
+          console.error("Status check error:", statusError);
+          throw statusError;
+        }
+
+        console.log("Status:", statusData?.status);
+
+        if (statusData?.status === "succeeded" && statusData?.output) {
+          const musicUrl = Array.isArray(statusData.output) ? statusData.output[0] : statusData.output;
+          setMusicData({ url: musicUrl, prompt });
+          toast.success("Music generated successfully!");
+          return;
+        }
+
+        if (statusData?.status === "failed") {
+          throw new Error(statusData?.error || "Music generation failed");
+        }
+
+        attempts++;
+        
+        // Show progress update every 10 seconds
+        if (attempts % 5 === 0) {
+          toast.info("Still generating... Please wait.");
+        }
       }
 
-      const data = await response.json();
+      throw new Error("Music generation timed out. Please try again.");
       
-      // For demo purposes, using a placeholder
-      // In production, this would be: setMusicData({ url: data.musicUrl, prompt });
-      toast.info("Backend not connected yet. This is a UI demo.");
-      
-      // Simulate API delay
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      
-      // Demo: Use a placeholder audio URL (you can replace this with actual generated music)
-      setMusicData({
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", // Demo audio
-        prompt,
-      });
-      
-      toast.success("Music generated successfully!");
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Something went wrong";
       setError(errorMessage);
       toast.error(errorMessage);
+      console.error("Generation error:", err);
     } finally {
       setIsLoading(false);
     }

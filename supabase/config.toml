@@ -1,1 +1,7 @@
 project_id = "athdfeepnsnxdvgupvtk"
+
+[functions.generate-music]
+verify_jwt = false
+
+[functions.check-music-status]
+verify_jwt = false
